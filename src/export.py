@@ -1,10 +1,11 @@
 """
 YOLO Model Export Script
-Exports trained YOLO model to ONNX and TensorFlow Lite formats with various configurations
+Exports trained YOLO model to TensorFlow Lite formats with various image sizes
 """
 
 from ultralytics import YOLO
 import os
+import shutil
 from pathlib import Path
 from src.config import settings
 import re
@@ -41,7 +42,8 @@ def find_latest_run() -> int:
 
 def export_model(run_number: int = None):
     """
-    Export YOLO model to multiple formats.
+    Export YOLO model to TensorFlow Lite format with different image sizes.
+    Creates best_saved_model folders for each size and copies them to exported_models directory.
 
     Args:
         run_number: The run number to export. If None, finds the latest run automatically.
@@ -54,8 +56,9 @@ def export_model(run_number: int = None):
     # Construct paths from config
     # Handle run_number=1 as no suffix, run_number>1 as suffix
     experiment_name_full = settings.EXPERIMENT_NAME if run_number == 1 else f"{settings.EXPERIMENT_NAME}{run_number}"
-    weights_path = Path(settings.PROJECT_NAME) / experiment_name_full / "weights" / "best.pt"
-    export_dir = Path(settings.PROJECT_NAME) / experiment_name_full / "exported_weights"
+    weights_dir = Path(settings.PROJECT_NAME) / experiment_name_full / "weights"
+    weights_path = weights_dir / "best.pt"
+    export_dir = Path(settings.PROJECT_NAME) / experiment_name_full / "exported_models"
 
     # Validate weights file exists
     if not weights_path.exists():
@@ -64,71 +67,81 @@ def export_model(run_number: int = None):
     # Create export directory if it doesn't exist
     os.makedirs(export_dir, exist_ok=True)
 
-    # Load the trained model
-    print(f"Loading model from {weights_path}...")
-    model = YOLO(str(weights_path))
+    # Image sizes to export
+    image_sizes = [640, 320, 160]
 
-    # Export to ONNX
-    print("\n" + "="*60)
-    print("Exporting to ONNX format...")
     print("="*60)
-    onnx_path = model.export(
-        format='onnx',
-        nms=True,       # Include Non-Maximum Suppression to filter detections
-        simplify=True,  # Simplify the model graph
-    )
-    # Move ONNX file to export directory
-    if onnx_path:
-        onnx_file = Path(onnx_path)
-        dest_onnx = export_dir / onnx_file.name
-        onnx_file.rename(dest_onnx)
-        print(f"✓ ONNX model saved to: {dest_onnx}")
+    print("YOLO Model Export - Multiple Image Sizes")
+    print("="*60)
+    print(f"Model: {weights_path}")
+    print(f"Export directory: {export_dir}")
+    print(f"Image sizes: {image_sizes}")
+    print("="*60)
 
-    # TensorFlow Lite export configurations
-    tflite_configs = [
-        {'imgsz': 640, 'half': True, 'name': 'tflite_640_fp16'},
-        {'imgsz': 320, 'half': True, 'name': 'tflite_320_fp16'},
-        {'imgsz': 160, 'half': True, 'name': 'tflite_160_fp16'},
-        {'imgsz': 640, 'half': False, 'name': 'tflite_640_fp32'},
-        {'imgsz': 320, 'half': False, 'name': 'tflite_320_fp32'},
-        {'imgsz': 160, 'half': False, 'name': 'tflite_160_fp32'},
-    ]
-
-    # Export each TensorFlow Lite configuration
-    for i, config in enumerate(tflite_configs, 1):
-        print("\n" + "="*60)
-        print(f"Exporting TFLite model {i}/{len(tflite_configs)}: {config['name']}")
-        print(f"Image size: {config['imgsz']}, Precision: {'FP16' if config['half'] else 'FP32'}")
+    # Export each image size
+    for i, imgsz in enumerate(image_sizes, 1):
+        print(f"\n{'='*60}")
+        print(f"Export {i}/{len(image_sizes)}: Image size {imgsz}x{imgsz}")
         print("="*60)
 
-        # Reload model for each export to avoid issues
+        # Clean up previous best_saved_model if it exists
+        saved_model_path = weights_dir / "best_saved_model"
+        if saved_model_path.exists():
+            print(f"Cleaning up previous export folder: {saved_model_path}")
+            shutil.rmtree(saved_model_path)
+
+        # Load and export model
+        print(f"Loading model from {weights_path}...")
         model = YOLO(str(weights_path))
 
-        tflite_path = model.export(
-            format='tflite',
-            imgsz=config['imgsz'],
-            half=config['half'],
-            nms=True,       # Include Non-Maximum Suppression to filter detections
+        print(f"Exporting TFLite model with imgsz={imgsz}...")
+        model.export(
+            format="tflite",
+            imgsz=imgsz,
+            dynamic=False,
+            simplify=True,
+            batch=1,
+            nms=True,
         )
 
-        # Move TFLite file to export directory with custom name
-        if tflite_path:
-            tflite_file = Path(tflite_path)
-            dest_tflite = export_dir / f"{config['name']}.tflite"
-            tflite_file.rename(dest_tflite)
-            print(f"✓ TFLite model saved to: {dest_tflite}")
+        # Copy the best_saved_model folder to export directory
+        if saved_model_path.exists():
+            dest_folder = export_dir / f"best_saved_model_{imgsz}"
+            if dest_folder.exists():
+                print(f"Removing existing folder: {dest_folder}")
+                shutil.rmtree(dest_folder)
+
+            print(f"Copying {saved_model_path} -> {dest_folder}")
+            shutil.copytree(saved_model_path, dest_folder)
+            print(f"✓ Exported model saved to: {dest_folder}")
+
+            # List contents of the exported folder
+            print(f"\nContents of {dest_folder.name}:")
+            for item in dest_folder.rglob("*"):
+                if item.is_file():
+                    size_mb = item.stat().st_size / (1024 * 1024)
+                    rel_path = item.relative_to(dest_folder)
+                    print(f"  - {rel_path} ({size_mb:.2f} MB)")
+        else:
+            print(f"⚠ Warning: best_saved_model folder not found after export")
+
+    # Clean up the last best_saved_model in weights directory
+    if saved_model_path.exists():
+        print(f"\nCleaning up temporary folder: {saved_model_path}")
+        shutil.rmtree(saved_model_path)
 
     print("\n" + "="*60)
     print("Export Complete!")
     print("="*60)
     print(f"\nAll exported models are saved in: {export_dir}")
-    print("\nExported files:")
-    print("  - 1 ONNX model (with NMS and simplified graph)")
-    print("  - 6 TensorFlow Lite models:")
-    print("    • 640px (FP16 & FP32)")
-    print("    • 320px (FP16 & FP32)")
-    print("    • 160px (FP16 & FP32)")
-    print("\nAll models include NMS (Non-Maximum Suppression)")
+    print(f"\nExported folders:")
+    for imgsz in image_sizes:
+        folder = export_dir / f"best_saved_model_{imgsz}"
+        if folder.exists():
+            print(f"  ✓ best_saved_model_{imgsz}/ (contains FP16 and FP32 variants)")
+        else:
+            print(f"  ✗ best_saved_model_{imgsz}/ (not found)")
+    print("\nEach folder contains TFLite models with NMS included")
 
 
 if __name__ == "__main__":
