@@ -2,3 +2,5 @@ datasets/*
 .venv
 **/__pycache__/**
 runs/
+src/pose_object_detection_running/output/*
+src/pose_object_detection_running/yolo_test_folder/*
