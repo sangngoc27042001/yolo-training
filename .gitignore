@@ -4,3 +4,6 @@ datasets/*
 runs/
 src/pose_object_detection_running/output/*
 src/pose_object_detection_running/yolo_test_folder/*
+src/pose_object_detection_running/videos/*
+output_frames/*
+.DS_Store
