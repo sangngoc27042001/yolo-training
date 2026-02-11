@@ -1,5 +1,10 @@
 .PHONY: train export-weights pod-inference camera-guide
 
+setup:
+	pip install uv
+	@[ -d .venv ] || uv venv
+	uv pip install -r requirements.txt
+
 train:
 	uv run python -m src.train
 
