@@ -1,6 +1,7 @@
 """
-YOLO Object Detection Inference
-Performs object detection on images using a TFLite YOLO model.
+YOLO Object Segmentation Inference (Bounding Boxes Only)
+Performs object detection on images using a TFLite YOLO segmentation model.
+Note: This uses a segmentation model but only returns bounding boxes, ignoring masks.
 Input: PIL Image
 Output: Annotated PIL Image with bounding boxes and labels
 """
@@ -16,10 +17,8 @@ import os
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-# MODEL_FILE_PATH = "src/yolo26n_saved_model/yolo26n_float16.tflite"  # Path to TFLite model
-MODEL_FILE_PATH = "src/yolo11n_saved_model/yolo11n_float16.tflite"
-# MODEL_FILE_PATH = "src/yolo12n_saved_model/yolo12n_float16.tflite"
-OUTPUT_PATH = "yolo11_output"  # Output directory for inference results
+MODEL_FILE_PATH = "src/yolo26n-seg_saved_model/yolo26n-seg_float16.tflite"  # Path to TFLite segmentation model
+OUTPUT_PATH = "yolo26n-seg_output"  # Output directory for inference results
 
 
 # COCO class names for YOLO
@@ -45,7 +44,7 @@ CLASS_NAMES = {
 # Filtered classes to detect
 TARGET_CLASSES = [0, 62, 63, 67]  # person, tv, laptop, cell phone
 
-# Colors for different classes (BGR format for PIL)
+# Colors for different classes (RGB format for PIL)
 CLASS_COLORS = {
     0: (255, 0, 0),      # person - Red
     62: (0, 255, 0),     # tv - Green
@@ -183,11 +182,13 @@ def postprocess_output(output: np.ndarray, orig_size: tuple, input_size: tuple,
                        conf_threshold: float = 0.3, target_classes: list = None,
                        top_k: int = 30, iou_threshold: float = 0.45) -> list:
     """
-    Postprocess YOLO model output to extract object detections.
+    Postprocess YOLO segmentation model output to extract object detections (bounding boxes only).
+    
+    Note: This function ignores segmentation masks and only extracts bounding boxes.
 
     Args:
-        output: Model output array with shape (1, N, 6) or (1, N, 85)
-                Format per detection: [x1_norm, y1_norm, x2_norm, y2_norm, conf, class_id]
+        output: Model output array with shape (1, N, 6+mask_coeffs) or similar
+                Format per detection: [x1_norm, y1_norm, x2_norm, y2_norm, conf, class_id, ...]
                 All coordinates are normalized to [0, 1] relative to input size
         orig_size: Original image size (width, height)
         input_size: Model input size (width, height)
@@ -213,7 +214,8 @@ def postprocess_output(output: np.ndarray, orig_size: tuple, input_size: tuple,
     # Process each detection
     for detection in output[0]:
         # Extract bbox, confidence, and class
-        # Format: [x1_norm, y1_norm, x2_norm, y2_norm, confidence, class_id, ...]
+        # Format: [x1_norm, y1_norm, x2_norm, y2_norm, confidence, class_id, ...mask_coefficients]
+        # We only care about the first 6 values (bounding box info)
         x1_norm, y1_norm, x2_norm, y2_norm = detection[0:4]
         confidence = detection[4]
         class_id = int(detection[5])
@@ -335,7 +337,8 @@ def annotate_image(image: Image.Image, detections: list) -> Image.Image:
 def inference(image: Image.Image, model_path: str = None,
               target_classes: list = TARGET_CLASSES, top_k: int = TOP_K) -> tuple:
     """
-    Perform object detection inference on a PIL image.
+    Perform object detection inference on a PIL image using a segmentation model.
+    Note: Only bounding boxes are returned; segmentation masks are ignored.
 
     Args:
         image: Input PIL Image
@@ -372,11 +375,11 @@ def inference(image: Image.Image, model_path: str = None,
     interpreter.set_tensor(input_details[0]['index'], preprocessed)
     interpreter.invoke()
 
-    # Get output
+    # Get output (first output contains bounding boxes)
     output = interpreter.get_tensor(output_details[0]['index'])
     print(f"Model output shape: {output.shape}")
 
-    # Postprocess output
+    # Postprocess output (extract bounding boxes only, ignore masks)
     detections = postprocess_output(
         output, image.size, target_size,
         conf_threshold=CONFIDENCE_THRESHOLD,
@@ -434,7 +437,7 @@ def process_input(input_path: str, model_path: str = None):
             print(f"Image size: {image.size}")
 
             # Run inference
-            print("\nRunning object detection inference...")
+            print("\nRunning object detection inference (segmentation model, bounding boxes only)...")
             annotated_image, detections, is_second_laptop = inference(image, model_path)
 
             # Print detections
@@ -443,7 +446,7 @@ def process_input(input_path: str, model_path: str = None):
                 print(f"  {i}. {det['class_name']}: {det['confidence']:.3f} at {det['bbox']}")
 
             # Save result to output directory
-            output_path = output_dir / "object_detection_result.jpg"
+            output_path = output_dir / "object_segmentation_result.jpg"
             if annotated_image.mode == 'RGBA':
                 annotated_image = annotated_image.convert('RGB')
             annotated_image.save(output_path)
@@ -501,13 +504,13 @@ def process_input(input_path: str, model_path: str = None):
                 if annotated_image.mode == 'RGBA':
                     annotated_image = annotated_image.convert('RGB')
                 annotated_image.save(output_filename)
-                print(f"Saved annotated image to {output_filename}")
+                print(f"Saved to {output_filename}")
 
             except Exception as e:
                 print(f"Error processing {image_path.name}: {e}")
 
         print("\n" + "=" * 60)
-        print("All processing complete!")
+        print("Processing complete!")
         print("=" * 60)
 
 
@@ -529,7 +532,7 @@ if __name__ == "__main__":
         print(f"No input provided, using default: {input_path}")
         print(f"Using model: {MODEL_FILE_PATH}")
         print(f"Output directory: {OUTPUT_PATH}")
-        print("Usage: python object_detection_inference.py <url_or_folder_path> [model_path]\n")
+        print("Usage: python object_segmentation_inference.py <url_or_folder_path> [model_path]\n")
 
     # Process the input
     process_input(input_path, model_path)
